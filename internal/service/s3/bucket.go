@@ -661,6 +661,24 @@ func ResourceBucket() *schema.Resource {
 				},
 			},
 
+			"skip_acceleration_config": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+			},
+
+			"skip_payer_config": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+			},
+
+			"skip_lock_config": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+			},
+
 			"tags":     tftags.TagsSchema(),
 			"tags_all": tftags.TagsSchemaComputed(),
 		},
@@ -805,13 +823,15 @@ func resourceBucketUpdate(d *schema.ResourceData, meta interface{}) error {
 		}
 	}
 
-	if d.HasChange("acceleration_status") {
+	skipAcceleration := d.Get("skip_acceleration_config").(bool)
+	if d.HasChange("acceleration_status") && !skipAcceleration {
 		if err := resourceBucketAccelerationUpdate(conn, d); err != nil {
 			return err
 		}
 	}
 
-	if d.HasChange("request_payer") {
+	skipPayer := d.Get("skip_payer_config").(bool)
+	if d.HasChange("request_payer") && !skipPayer {
 		if err := resourceBucketRequestPayerUpdate(conn, d); err != nil {
 			return err
 		}
@@ -829,7 +849,8 @@ func resourceBucketUpdate(d *schema.ResourceData, meta interface{}) error {
 		}
 	}
 
-	if d.HasChange("object_lock_configuration") {
+	skipObjectLock := d.Get("skip_lock_config").(bool)
+	if d.HasChange("object_lock_configuration") && !skipObjectLock {
 		if err := resourceBucketObjectLockConfigurationUpdate(conn, d); err != nil {
 			return err
 		}
@@ -920,7 +941,7 @@ func resourceBucketRead(d *schema.ResourceData, meta interface{}) error {
 		}
 	}
 
-	//Read the Grant ACL. Reset if `acl` (canned ACL) is set.
+	// Read the Grant ACL. Reset if `acl` (canned ACL) is set.
 	if acl, ok := d.GetOk("acl"); ok && acl.(string) != "private" {
 		if err := d.Set("grant", nil); err != nil {
 			return fmt.Errorf("error resetting grant %s", err)
@@ -1072,34 +1093,40 @@ func resourceBucketRead(d *schema.ResourceData, meta interface{}) error {
 
 	// Read the acceleration status
 
-	accelerateResponse, err := verify.RetryOnAWSCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
-		return conn.GetBucketAccelerateConfiguration(&s3.GetBucketAccelerateConfigurationInput{
-			Bucket: aws.String(d.Id()),
+	skipAcceleration := d.Get("skip_acceleration_config").(bool)
+	if !skipAcceleration {
+		accelerateResponse, err := verify.RetryOnAWSCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
+			return conn.GetBucketAccelerateConfiguration(&s3.GetBucketAccelerateConfigurationInput{
+				Bucket: aws.String(d.Id()),
+			})
 		})
-	})
 
-	// Amazon S3 Transfer Acceleration might not be supported in the region
-	if err != nil && !tfawserr.ErrMessageContains(err, "MethodNotAllowed", "") && !tfawserr.ErrMessageContains(err, "UnsupportedArgument", "") {
-		return fmt.Errorf("error getting S3 Bucket acceleration configuration: %s", err)
-	}
-	if accelerate, ok := accelerateResponse.(*s3.GetBucketAccelerateConfigurationOutput); ok {
-		d.Set("acceleration_status", accelerate.Status)
+		// Amazon S3 Transfer Acceleration might not be supported in the region
+		if err != nil && !tfawserr.ErrMessageContains(err, "MethodNotAllowed", "") && !tfawserr.ErrMessageContains(err, "UnsupportedArgument", "") {
+			return fmt.Errorf("error getting S3 Bucket acceleration configuration: %s", err)
+		}
+		if accelerate, ok := accelerateResponse.(*s3.GetBucketAccelerateConfigurationOutput); ok {
+			d.Set("acceleration_status", accelerate.Status)
+		}
 	}
 
 	// Read the request payer configuration.
 
-	payerResponse, err := verify.RetryOnAWSCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
-		return conn.GetBucketRequestPayment(&s3.GetBucketRequestPaymentInput{
-			Bucket: aws.String(d.Id()),
+	skipPayer := d.Get("skip_payer_config").(bool)
+	if !skipPayer {
+		payerResponse, err := verify.RetryOnAWSCode(s3.ErrCodeNoSuchBucket, func() (interface{}, error) {
+			return conn.GetBucketRequestPayment(&s3.GetBucketRequestPaymentInput{
+				Bucket: aws.String(d.Id()),
+			})
 		})
-	})
 
-	if err != nil {
-		return fmt.Errorf("error getting S3 Bucket request payment: %s", err)
-	}
+		if err != nil {
+			return fmt.Errorf("error getting S3 Bucket request payment: %s", err)
+		}
 
-	if payer, ok := payerResponse.(*s3.GetBucketRequestPaymentOutput); ok {
-		d.Set("request_payer", payer.Payer)
+		if payer, ok := payerResponse.(*s3.GetBucketRequestPaymentOutput); ok {
+			d.Set("request_payer", payer.Payer)
+		}
 	}
 
 	// Read the logging configuration
@@ -1297,11 +1324,14 @@ func resourceBucketRead(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	// Object Lock configuration.
-	if conf, err := readS3ObjectLockConfiguration(conn, d.Id()); err != nil {
-		return fmt.Errorf("error getting S3 Bucket Object Lock configuration: %s", err)
-	} else {
-		if err := d.Set("object_lock_configuration", conf); err != nil {
-			return fmt.Errorf("error setting object_lock_configuration: %s", err)
+	skipObjectLock := d.Get("skip_lock_config").(bool)
+	if !skipObjectLock {
+		if conf, err := readS3ObjectLockConfiguration(conn, d.Id()); err != nil {
+			return fmt.Errorf("error getting S3 Bucket Object Lock configuration: %s", err)
+		} else {
+			if err := d.Set("object_lock_configuration", conf); err != nil {
+				return fmt.Errorf("error setting object_lock_configuration: %s", err)
+			}
 		}
 	}
 
@@ -2888,7 +2918,7 @@ func flattenS3ObjectLockConfiguration(conf *s3.ObjectLockConfiguration) []interf
 }
 
 func flattenGrants(ap *s3.GetBucketAclOutput) []interface{} {
-	//if ACL grants contains bucket owner FULL_CONTROL only - it is default "private" acl
+	// if ACL grants contains bucket owner FULL_CONTROL only - it is default "private" acl
 	if len(ap.Grants) == 1 && aws.StringValue(ap.Grants[0].Grantee.ID) == aws.StringValue(ap.Owner.ID) &&
 		aws.StringValue(ap.Grants[0].Permission) == s3.PermissionFullControl {
 		return nil

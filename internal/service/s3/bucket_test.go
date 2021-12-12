@@ -2797,6 +2797,44 @@ func TestWebsiteEndpoint(t *testing.T) {
 	}
 }
 
+func TestAccAWSS3Bucket_SkipConfig(t *testing.T) {
+	bucketName := sdkacctest.RandomWithPrefix("tf-test-bucket")
+	region := acctest.Region()
+	hostedZoneID, _ := tfs3.HostedZoneIDForRegion(region)
+	resourceName := "aws_s3_bucket.bucket"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { acctest.PreCheck(t) },
+		ErrorCheck:   acctest.ErrorCheck(t, s3.EndpointsID),
+		Providers:    acctest.Providers,
+		CheckDestroy: testAccCheckBucketDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAWSS3BucketConfig_SkipConfig(bucketName),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckBucketExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "hosted_zone_id", hostedZoneID),
+					resource.TestCheckResourceAttr(resourceName, "region", region),
+					resource.TestCheckNoResourceAttr(resourceName, "website_endpoint"),
+					acctest.CheckResourceAttrGlobalARNNoAccount(resourceName, "arn", "s3", bucketName),
+					resource.TestCheckResourceAttr(resourceName, "bucket", bucketName),
+					testAccCheckS3BucketDomainName(resourceName, "bucket_domain_name", bucketName),
+					resource.TestCheckResourceAttr(resourceName, "bucket_regional_domain_name", testAccBucketRegionalDomainName(bucketName, region)),
+				),
+			},
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
+				ImportStateVerifyIgnore: []string{
+					"force_destroy", "acl",
+					"skip_acceleration_config", "skip_payer_config", "skip_lock_config",
+				},
+			},
+		},
+	})
+}
+
 // testAccErrorCheckSkipS3 skips tests that have error messages indicating unsupported features
 func testAccErrorCheckSkipS3(t *testing.T) resource.ErrorCheckFunc {
 	return acctest.ErrorCheckSkipMessagesContaining(t,
@@ -5039,6 +5077,17 @@ resource "aws_iam_role" "test" {
 POLICY
 }
 `, rName)
+}
+
+func testAccAWSS3BucketConfig_SkipConfig(bucketName string) string {
+	return fmt.Sprintf(`
+resource "aws_s3_bucket" "bucket" {
+  bucket = %q
+  skip_acceleration_config = true
+  skip_payer_config        = true
+  skip_lock_config         = true
+}
+`, bucketName)
 }
 
 const testAccBucketBucketEmptyStringConfig = `
